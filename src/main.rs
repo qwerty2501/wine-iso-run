@@ -1,7 +1,6 @@
 use clap::Parser;
-use nanoid::nanoid;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     ffi::OsStr,
     fs::{self, File},
     io::Read,
@@ -18,12 +17,6 @@ const WINEPREFIX: &str = "WINEPREFIX";
 #[derive(Serialize, Deserialize, Debug)]
 struct Config {
     data_dir: Option<PathBuf>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct PathMap {
-    #[serde(default)]
-    path_map: HashMap<PathBuf, String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -122,31 +115,13 @@ where
 fn get_env_dir(exec_path: impl AsRef<Path>, data_dir: impl AsRef<Path>) -> Result<PathBuf> {
     let exec_path = exec_path.as_ref();
     let data_dir = data_dir.as_ref();
-    let path_map_path = data_dir.join("path_map.toml");
-    let mut path_map_data = vec![];
-    {
-        let mut path_map_file = if path_map_path.exists() {
-            File::open(&path_map_path)?
-        } else {
-            File::create_new(&path_map_path)?
-        };
-        path_map_file.read_to_end(&mut path_map_data)?;
-    }
-    let mut path_map = toml::from_slice::<PathMap>(&path_map_data)?;
-    let id = if let Some(id) = path_map.path_map.get(exec_path) {
-        id.clone()
-    } else {
-        let id = nanoid!();
-        path_map
-            .path_map
-            .insert(exec_path.to_path_buf(), id.clone());
-        fs::write(
-            path_map_path.as_path(),
-            toml::to_string_pretty(&path_map)?.as_bytes(),
-        )?;
-        id
-    };
-    Ok(data_dir.join(id))
+    Ok(data_dir.join(
+        exec_path
+            .file_name()
+            .map(|n| n.to_string_lossy())
+            .ok_or_else(|| anyhow!("Can not get file name."))?
+            .as_ref(),
+    ))
 }
 
 fn get_base_env_dir_from_exec_path(
