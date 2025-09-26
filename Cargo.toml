@@ -3,6 +3,11 @@ name = "wine-iso-run"
 version = "0.1.0"
 edition = "2024"
 
+[profile.release]
+opt-level = 3
+strip = "debuginfo"
+lto = "thin"
+
 [dependencies]
 serde = { version = "1.0.227", features = ["derive"] }
 directories = "6.0.0"
