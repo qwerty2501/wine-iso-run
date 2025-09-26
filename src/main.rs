@@ -45,24 +45,12 @@ fn main() -> Result<()> {
 
 fn run(args: Args) -> Result<()> {
     let data_dir = prepare()?;
-    let path_map_path = data_dir.join("path_map.toml");
-    let mut path_map_file = if path_map_path.exists() {
-        File::open(path_map_path)?
-    } else {
-        File::create_new(path_map_path)?
-    };
-    let mut path_map_data = vec![];
-    path_map_file.read_to_end(&mut path_map_data)?;
-    let mut path_map = toml::from_slice::<PathMap>(&path_map_data)?;
-    let id = if let Some(id) = path_map.path_map.get(&args.exec_path) {
-        id.clone()
-    } else {
-        let id = nanoid!();
-        path_map.path_map.insert(args.exec_path.clone(), id.clone());
-        path_map_file.write_all(toml::to_string_pretty(&path_map)?.as_bytes())?;
-        id
-    };
-    let exec_env_path = data_dir.join(id);
+    let exec_env_path =
+        if let Some(exec_env_path) = get_base_env_dir_from_exec_path(&args.exec_path, &data_dir) {
+            exec_env_path
+        } else {
+            get_env_dir(&args.exec_path, &data_dir)?
+        };
     if !exec_env_path.exists() {
         fs::create_dir_all(&exec_env_path)?;
     }
@@ -118,6 +106,60 @@ where
         .stderr(Stdio::inherit())
         .env(WINEPREFIX, wine_prefix.as_ref().as_os_str())
         .status()?)
+}
+fn get_env_dir(exec_path: impl AsRef<Path>, data_dir: impl AsRef<Path>) -> Result<PathBuf> {
+    let exec_path = exec_path.as_ref();
+    let data_dir = data_dir.as_ref();
+    let path_map_path = data_dir.join("path_map.toml");
+    let mut path_map_file = if path_map_path.exists() {
+        File::open(path_map_path)?
+    } else {
+        File::create_new(path_map_path)?
+    };
+    let mut path_map_data = vec![];
+    path_map_file.read_to_end(&mut path_map_data)?;
+    let mut path_map = toml::from_slice::<PathMap>(&path_map_data)?;
+    let id = if let Some(id) = path_map.path_map.get(exec_path) {
+        id.clone()
+    } else {
+        let id = nanoid!();
+        path_map
+            .path_map
+            .insert(exec_path.to_path_buf(), id.clone());
+        path_map_file.write_all(toml::to_string_pretty(&path_map)?.as_bytes())?;
+        id
+    };
+    Ok(data_dir.join(id))
+}
+
+fn get_base_env_dir_from_exec_path(
+    exec_path: impl AsRef<Path>,
+    data_dir: impl AsRef<Path>,
+) -> Option<PathBuf> {
+    let exec_path = exec_path.as_ref();
+    let data_dir = data_dir.as_ref();
+    let mut base_wine_prefix_dir = None;
+    while let Some(parent_dir) = exec_path.parent() {
+        let name = parent_dir
+            .file_name()
+            .map(|n| n.to_str().unwrap_or(""))
+            .unwrap_or("");
+        if name == ".wine" {
+            base_wine_prefix_dir = Some(parent_dir);
+            break;
+        }
+    }
+    if let Some(base_wine_prefix_dir) = base_wine_prefix_dir
+        && base_wine_prefix_dir
+            .to_string_lossy()
+            .contains(data_dir.to_string_lossy().as_ref())
+        && let Some(base_env_dir) = base_wine_prefix_dir.parent()
+        && base_env_dir.join("conf.toml").exists()
+    {
+        Some(base_env_dir.to_path_buf())
+    } else {
+        None
+    }
 }
 fn prepare() -> Result<PathBuf> {
     if let Some(project_dirs) = ProjectDirs::from("", "", APP_NAME) {
