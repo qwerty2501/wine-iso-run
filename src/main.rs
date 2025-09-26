@@ -33,9 +33,12 @@ struct ExecEnv {
 #[derive(Parser, Debug)]
 #[command(version,about,long_about = None)]
 struct Args {
+    /// Run winetricks commands when it is not yet executed.
     #[arg(long)]
     with_tricks: Vec<String>,
+    /// Path to exe file.
     exec_path: PathBuf,
+    /// Arguments for exe.
     args: Vec<String>,
 }
 
