@@ -22,11 +22,13 @@ struct Config {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct PathMap {
+    #[serde(default)]
     path_map: HashMap<PathBuf, String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct ExecEnv {
+    #[serde(default)]
     executed_tricks: HashSet<String>,
 }
 
@@ -59,13 +61,15 @@ fn run(args: Args) -> Result<()> {
     }
 
     let exec_env_conf_path = exec_env_path.join("conf.toml");
-    let mut exec_env_conf_file = if exec_env_conf_path.exists() {
-        File::open(&exec_env_conf_path)?
-    } else {
-        File::create_new(&exec_env_conf_path)?
-    };
     let mut exec_env_conf_buf = vec![];
-    exec_env_conf_file.read_to_end(&mut exec_env_conf_buf)?;
+    {
+        let mut exec_env_conf_file = if exec_env_conf_path.exists() {
+            File::open(&exec_env_conf_path)?
+        } else {
+            File::create_new(&exec_env_conf_path)?
+        };
+        exec_env_conf_file.read_to_end(&mut exec_env_conf_buf)?;
+    }
     let mut exec_conf = toml::from_slice::<ExecEnv>(&exec_env_conf_buf)?;
     let exec_env_wine_path = exec_env_path.join(".wine");
     if !exec_env_wine_path.exists() {
@@ -74,13 +78,18 @@ fn run(args: Args) -> Result<()> {
 
     println!("Resolve winetricks...");
     for trick in args.with_tricks {
-        if !exec_conf.executed_tricks.contains(&trick) {
-            exec_conf.executed_tricks.insert(trick.clone());
-            let status = exec_command("winetricks", &[trick.to_string()], &exec_env_wine_path)?;
-            if !status.success() {
-                bail!("winetricks is not succeed {trick}, status:{status}");
+        for trick in trick.split(",") {
+            if !exec_conf.executed_tricks.contains(trick) {
+                exec_conf.executed_tricks.insert(trick.to_string());
+                let status = exec_command("winetricks", &[trick.to_string()], &exec_env_wine_path)?;
+                if !status.success() {
+                    bail!("winetricks is not succeed {trick}, status:{status}");
+                }
+                fs::write(
+                    &exec_env_conf_path,
+                    toml::to_string_pretty(&exec_conf)?.as_bytes(),
+                )?;
             }
-            exec_env_conf_file.write_all(toml::to_string_pretty(&exec_conf)?.as_bytes())?;
         }
     }
     let exec_path_str = args.exec_path.to_string_lossy().to_string();
@@ -114,13 +123,15 @@ fn get_env_dir(exec_path: impl AsRef<Path>, data_dir: impl AsRef<Path>) -> Resul
     let exec_path = exec_path.as_ref();
     let data_dir = data_dir.as_ref();
     let path_map_path = data_dir.join("path_map.toml");
-    let mut path_map_file = if path_map_path.exists() {
-        File::open(path_map_path)?
-    } else {
-        File::create_new(path_map_path)?
-    };
     let mut path_map_data = vec![];
-    path_map_file.read_to_end(&mut path_map_data)?;
+    {
+        let mut path_map_file = if path_map_path.exists() {
+            File::open(&path_map_path)?
+        } else {
+            File::create_new(&path_map_path)?
+        };
+        path_map_file.read_to_end(&mut path_map_data)?;
+    }
     let mut path_map = toml::from_slice::<PathMap>(&path_map_data)?;
     let id = if let Some(id) = path_map.path_map.get(exec_path) {
         id.clone()
@@ -129,7 +140,10 @@ fn get_env_dir(exec_path: impl AsRef<Path>, data_dir: impl AsRef<Path>) -> Resul
         path_map
             .path_map
             .insert(exec_path.to_path_buf(), id.clone());
-        path_map_file.write_all(toml::to_string_pretty(&path_map)?.as_bytes())?;
+        fs::write(
+            path_map_path.as_path(),
+            toml::to_string_pretty(&path_map)?.as_bytes(),
+        )?;
         id
     };
     Ok(data_dir.join(id))
@@ -142,7 +156,8 @@ fn get_base_env_dir_from_exec_path(
     let exec_path = exec_path.as_ref();
     let data_dir = data_dir.as_ref();
     let mut base_wine_prefix_dir = None;
-    while let Some(parent_dir) = exec_path.parent() {
+    let mut taget_path = exec_path;
+    while let Some(parent_dir) = taget_path.parent() {
         let name = parent_dir
             .file_name()
             .map(|n| n.to_str().unwrap_or(""))
@@ -151,6 +166,7 @@ fn get_base_env_dir_from_exec_path(
             base_wine_prefix_dir = Some(parent_dir);
             break;
         }
+        taget_path = parent_dir;
     }
     if let Some(base_wine_prefix_dir) = base_wine_prefix_dir
         && base_wine_prefix_dir
@@ -170,18 +186,20 @@ fn prepare() -> Result<PathBuf> {
             fs::create_dir_all(project_dirs.data_dir())?;
         }
         let conf_path = project_dirs.data_dir().join("config.toml");
-        let mut conf_file = if !conf_path.exists() {
-            File::create_new(conf_path)?
-        } else {
-            File::open(conf_path)?
-        };
         let mut conf_data = vec![];
-        conf_file.read_to_end(&mut conf_data)?;
+        {
+            let mut conf_file = if !conf_path.exists() {
+                File::create_new(&conf_path)?
+            } else {
+                File::open(&conf_path)?
+            };
+            conf_file.read_to_end(&mut conf_data)?;
+        }
         let mut conf = toml::from_slice::<Config>(&conf_data)?;
         if conf.data_dir.is_none() {
             conf.data_dir = Some(project_dirs.data_local_dir().to_path_buf());
             let save_data = toml::to_string_pretty(&conf)?;
-            conf_file.write_all(save_data.as_bytes())?;
+            fs::write(&conf_path, save_data.as_bytes())?;
         }
         let data_dir = conf.data_dir.unwrap();
         if !data_dir.exists() {
